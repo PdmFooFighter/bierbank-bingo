@@ -111,8 +111,9 @@ export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [card, setCard] = useState(() => createCard());
   const [completed, setCompleted] = useState([]);
-  const [adminMode, setAdminMode] = useState(false);
-  const [eventLog, setEventLog] = useState([]);
+const [adminMode] = useState(() => {
+  return new URLSearchParams(window.location.search).get("admin") === "1";
+});  const [eventLog, setEventLog] = useState([]);
 
   const score = useMemo(
     () => completed.reduce((sum, index) => sum + RARITY[card[index].rarity].xp, 0),
@@ -193,21 +194,7 @@ export default function App() {
         ))}
       </section>
 
-      <section style={{ maxWidth: 1100, margin: "24px auto 0" }}>
-        <button
-          style={{
-            padding: "12px 16px",
-            borderRadius: 14,
-            border: "1px solid rgba(255,255,255,.2)",
-            background: adminMode ? "#7c3aed" : "rgba(255,255,255,.06)",
-            color: "white",
-            fontWeight: 700,
-          }}
-          onClick={() => setAdminMode(!adminMode)}
-        >
-          {adminMode ? "Admin-Modus ausblenden" : "Admin-Modus anzeigen"}
-        </button>
-      </section>
+     
 
       {adminMode && (
         <section style={{ maxWidth: 1100, margin: "18px auto 0" }}>
