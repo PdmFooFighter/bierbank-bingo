@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import "./App.css";
 import { supabase } from "./supabase";
+import "./App.css";
 
 const RARITY = {
   common: { xp: 1 },
@@ -110,12 +110,51 @@ function getCompletedLines(completedIndexes) {
 
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
+  const [user, setUser] = useState(null);
   const [card, setCard] = useState(() => createCard());
   const [completed, setCompleted] = useState([]);
 const [adminMode] = useState(() => {
   return new URLSearchParams(window.location.search).get("admin") === "1";
 });  const [eventLog, setEventLog] = useState([]);
+const [loading, setLoading] = useState(true);
 
+useEffect(() => {
+  async function getSession() {
+    const { data } = await supabase.auth.getSession();
+
+    setUser(data.session?.user ?? null);
+    setLoading(false);
+  }
+
+  getSession();
+
+  const {
+    data: { subscription },
+  } = supabase.auth.onAuthStateChange((_event, session) => {
+    setUser(session?.user ?? null);
+  });
+
+  return () => subscription.unsubscribe();
+}, []);
+
+async function loginWithTwitch() {
+  await supabase.auth.signInWithOAuth({
+    provider: "twitch",
+    options: {
+      redirectTo: window.location.origin,
+    },
+  });
+}
+
+async function logout() {
+  await supabase.auth.signOut();
+}
+
+const twitchName =
+  user?.user_metadata?.preferred_username ||
+  user?.user_metadata?.name ||
+  user?.email ||
+  "Twitch User";
   const score = useMemo(
     () => completed.reduce((sum, index) => sum + RARITY[card[index].rarity].xp, 0),
     [completed, card]
@@ -152,19 +191,30 @@ const [adminMode] = useState(() => {
     );
   }
 
-  if (!loggedIn) {
-    return (
-      <main className="page center">
-        <section className="card login">
-          <div className="tag">Prototype v0.3</div>
-          <h1>Bierbank Bingo</h1>
-          <p>Wöchentliche 4x4-Bingo-Karte für PUBG-Stream-Momente.</p>
-          <button onClick={() => setLoggedIn(true)}>Mit Twitch anmelden</button>
-          <small>Demo-Version. Echter Twitch-Login folgt später.</small>
-        </section>
-      </main>
-    );
-  }
+ if (loading) {
+  return (
+    <main className="page center">
+      <section className="card login">
+        <h1>Bierbank Bingo</h1>
+        <p>Login wird geprüft...</p>
+      </section>
+    </main>
+  );
+}
+
+if (!user) {
+  return (
+    <main className="page center">
+      <section className="card login">
+        <div className="tag">Prototype v0.3</div>
+        <h1>Bierbank Bingo</h1>
+        <p>Wöchentliche 4x4-Bingo-Karte für PUBG-Stream-Momente.</p>
+        <button onClick={loginWithTwitch}>Mit Twitch anmelden</button>
+        <small>Echter Twitch Login via Twitch.</small>
+      </section>
+    </main>
+  );
+}
 
   return (
     <main className="page">
