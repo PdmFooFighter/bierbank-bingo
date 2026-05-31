@@ -109,48 +109,12 @@ function getCompletedLines(completedIndexes) {
 }
 
 export default function App() {
-  const [user, setUser] = useState(null);
-const [loading, setLoading] = useState(true);
+  const [loggedIn, setLoggedIn] = useState(false);
   const [card, setCard] = useState(() => createCard());
   const [completed, setCompleted] = useState([]);
 const [adminMode] = useState(() => {
   return new URLSearchParams(window.location.search).get("admin") === "1";
 });  const [eventLog, setEventLog] = useState([]);
-
-useEffect(() => {
-  async function getSession() {
-    const { data } = await supabase.auth.getSession();
-    setUser(data.session?.user ?? null);
-    setLoggedIn(!!data.session);
-    setLoading(false);
-  }
-
-  getSession();
-
-  const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-    setUser(session?.user ?? null);
-    setLoggedIn(!!session);
-  });
-
-  return () => {
-    listener.subscription.unsubscribe();
-  };
-}, []);
-
-async function loginWithTwitch() {
-  await supabase.auth.signInWithOAuth({
-    provider: "twitch",
-    options: {
-      redirectTo: window.location.origin,
-    },
-  });
-}
-
-async function logout() {
-  await supabase.auth.signOut();
-  setUser(null);
-  setLoggedIn(false);
-}
 
   const score = useMemo(
     () => completed.reduce((sum, index) => sum + RARITY[card[index].rarity].xp, 0),
@@ -172,44 +136,30 @@ async function logout() {
     }
 
     const event = EVENTS.find((item) => item.id === eventId);
-    setEventLog((prev) => [
-      {
-        text: event.text,
-        time: new Date().toLocaleTimeString("de-DE", {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-        hit: newIndexes.length > 0,
-      },
-      ...prev,
-    ].slice(0, 8));
+
+    setEventLog((prev) =>
+      [
+        {
+          text: event.text,
+          time: new Date().toLocaleTimeString("de-DE", {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          hit: newIndexes.length > 0,
+        },
+        ...prev,
+      ].slice(0, 8)
+    );
   }
-
-if (loading) {
-  return (
-    <main className="page center">
-      <section className="card login">
-        <h1>Bierbank Bingo</h1>
-        <p>Login wird geprüft...</p>
-      </section>
-    </main>
-  );
-}
-
-const twitchName =
-  user?.user_metadata?.preferred_username ||
-  user?.user_metadata?.name ||
-  user?.email ||
-  "Twitch User";
 
   if (!loggedIn) {
     return (
       <main className="page center">
         <section className="card login">
-          <div className="tag">Prototype v0.2</div>
+          <div className="tag">Prototype v0.3</div>
           <h1>Bierbank Bingo</h1>
           <p>Wöchentliche 4x4-Bingo-Karte für PUBG-Stream-Momente.</p>
-<button onClick={loginWithTwitch}>Mit Twitch anmelden</button>
+          <button onClick={() => setLoggedIn(true)}>Mit Twitch anmelden</button>
           <small>Demo-Version. Echter Twitch-Login folgt später.</small>
         </section>
       </main>
@@ -222,6 +172,9 @@ const twitchName =
         <div>
           <h1>Bierbank Bingo</h1>
           <p>KW 23/2026 · gültig bis Samstag, 23:59 Uhr</p>
+          <p style={{ marginTop: 6 }}>
+            Eingeloggt als <strong>{twitchName}</strong>
+          </p>
         </div>
 
         <div className="stats">
@@ -248,7 +201,21 @@ const twitchName =
         ))}
       </section>
 
-     
+      <section style={{ maxWidth: 1100, margin: "24px auto 0" }}>
+        <button
+          onClick={logout}
+          style={{
+            padding: "12px 16px",
+            borderRadius: 14,
+            border: "1px solid rgba(255,255,255,.2)",
+            background: "rgba(255,255,255,.06)",
+            color: "white",
+            fontWeight: 700,
+          }}
+        >
+          Logout
+        </button>
+      </section>
 
       {adminMode && (
         <section style={{ maxWidth: 1100, margin: "18px auto 0" }}>
