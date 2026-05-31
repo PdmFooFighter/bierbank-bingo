@@ -1,122 +1,81 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useMemo, useState } from "react";
+import "./App.css";
 
-function App() {
-  const [count, setCount] = useState(0)
+const events = [
+  { text: '"Reichtum durch sparen!"', xp: 1 },
+  { text: '"Je m\\\'appelle Luc"', xp: 1 },
+  { text: '"FOLGENDES!"', xp: 3 },
+  { text: "Bierbank erschreckt sich", xp: 3 },
+  { text: "Bierbank landet auf Windrad", xp: 3 },
+  { text: "Nade-Kill", xp: 1 },
+  { text: "10er Sub-Bombe", xp: 5 },
+  { text: "20er Sub-Bombe", xp: 10 },
+  { text: "Pan-Kill", xp: 5 },
+  { text: ">500m Kill", xp: 10 },
+  { text: "C4-Car-Kill", xp: 10 },
+  { text: "Bierbank nutzt ein Wasserfahrzeug", xp: 3 },
+  { text: "Quick Math", xp: 1 },
+  { text: "Grafikkartengeneration", xp: 3 },
+  { text: "Kill mit Gleiter", xp: 5 },
+  { text: "50er Sub-Bombe", xp: 20 },
+];
+
+export default function App() {
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [completed, setCompleted] = useState([]);
+
+  const score = useMemo(
+    () => completed.reduce((sum, index) => sum + events[index].xp, 0),
+    [completed]
+  );
+
+  const toggle = (index) => {
+    setCompleted((prev) =>
+      prev.includes(index) ? prev.filter((x) => x !== index) : [...prev, index]
+    );
+  };
+
+  if (!loggedIn) {
+    return (
+      <main className="page center">
+        <section className="card login">
+          <div className="tag">Prototype v0.1</div>
+          <h1>Bierbank Bingo</h1>
+          <p>Wöchentliche 4x4-Bingo-Karte für PUBG-Stream-Momente.</p>
+          <button onClick={() => setLoggedIn(true)}>Mit Twitch anmelden</button>
+          <small>Demo-Version. Echter Twitch-Login folgt später.</small>
+        </section>
+      </main>
+    );
+  }
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
+    <main className="page">
+      <header className="header">
         <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
+          <h1>Bierbank Bingo</h1>
+          <p>KW 23/2026 · gültig bis Samstag, 23:59 Uhr</p>
         </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
+        <div className="stats">
+          <strong>{completed.length}/16</strong>
+          <span>Felder</span>
+          <strong>{score}</strong>
+          <span>XP</span>
+        </div>
+      </header>
+
+      <section className="grid">
+        {events.map((event, index) => (
+          <button
+            key={event.text}
+            className={`tile ${completed.includes(index) ? "done" : ""}`}
+            onClick={() => toggle(index)}
+          >
+            <span>{event.text}</span>
+            <b>{event.xp} XP</b>
+          </button>
+        ))}
       </section>
-
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+    </main>
+  );
 }
-
-export default App
