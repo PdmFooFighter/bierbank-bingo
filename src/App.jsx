@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./App.css";
+import { supabase } from "./supabase";
 
 const RARITY = {
   common: { xp: 1 },
@@ -108,12 +109,48 @@ function getCompletedLines(completedIndexes) {
 }
 
 export default function App() {
-  const [loggedIn, setLoggedIn] = useState(false);
+  const [user, setUser] = useState(null);
+const [loading, setLoading] = useState(true);
   const [card, setCard] = useState(() => createCard());
   const [completed, setCompleted] = useState([]);
 const [adminMode] = useState(() => {
   return new URLSearchParams(window.location.search).get("admin") === "1";
 });  const [eventLog, setEventLog] = useState([]);
+
+useEffect(() => {
+  async function getSession() {
+    const { data } = await supabase.auth.getSession();
+    setUser(data.session?.user ?? null);
+    setLoggedIn(!!data.session);
+    setLoading(false);
+  }
+
+  getSession();
+
+  const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+    setUser(session?.user ?? null);
+    setLoggedIn(!!session);
+  });
+
+  return () => {
+    listener.subscription.unsubscribe();
+  };
+}, []);
+
+async function loginWithTwitch() {
+  await supabase.auth.signInWithOAuth({
+    provider: "twitch",
+    options: {
+      redirectTo: window.location.origin,
+    },
+  });
+}
+
+async function logout() {
+  await supabase.auth.signOut();
+  setUser(null);
+  setLoggedIn(false);
+}
 
   const score = useMemo(
     () => completed.reduce((sum, index) => sum + RARITY[card[index].rarity].xp, 0),
@@ -148,6 +185,23 @@ const [adminMode] = useState(() => {
     ].slice(0, 8));
   }
 
+if (loading) {
+  return (
+    <main className="page center">
+      <section className="card login">
+        <h1>Bierbank Bingo</h1>
+        <p>Login wird geprüft...</p>
+      </section>
+    </main>
+  );
+}
+
+const twitchName =
+  user?.user_metadata?.preferred_username ||
+  user?.user_metadata?.name ||
+  user?.email ||
+  "Twitch User";
+
   if (!loggedIn) {
     return (
       <main className="page center">
@@ -155,7 +209,7 @@ const [adminMode] = useState(() => {
           <div className="tag">Prototype v0.2</div>
           <h1>Bierbank Bingo</h1>
           <p>Wöchentliche 4x4-Bingo-Karte für PUBG-Stream-Momente.</p>
-          <button onClick={() => setLoggedIn(true)}>Mit Twitch anmelden</button>
+<button onClick={loginWithTwitch}>Mit Twitch anmelden</button>
           <small>Demo-Version. Echter Twitch-Login folgt später.</small>
         </section>
       </main>
