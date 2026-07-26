@@ -130,6 +130,8 @@ export default function App() {
   const [card, setCard] = useState(null);
   const [completed, setCompleted] = useState([]);
   const [eventLog, setEventLog] = useState([]);
+  const [adminSearch, setAdminSearch] = useState("");
+  const [drawnAt, setDrawnAt] = useState(null);
   const [message, setMessage] = useState("");
 
   const [adminMode] = useState(() => {
@@ -165,6 +167,7 @@ export default function App() {
     if (!user) {
       setCard(null);
       setCompleted([]);
+      setDrawnAt(null);
       return;
     }
 
@@ -175,7 +178,7 @@ export default function App() {
 
       const { data: cardData, error: cardError } = await supabase
         .from("weekly_cards")
-        .select("card")
+        .select("card, drawn_at")
         .eq("user_id", user.id)
         .eq("year", year)
         .eq("week", week)
@@ -190,10 +193,12 @@ export default function App() {
 
       const loadedCard = cardData?.card ?? null;
       setCard(loadedCard);
+      setDrawnAt(cardData?.drawn_at ?? null);
       setCardLoading(false);
 
       if (!loadedCard) {
         setCompleted([]);
+        setDrawnAt(null);
         setProgressLoading(false);
         return;
       }
@@ -247,6 +252,7 @@ export default function App() {
     setUser(null);
     setCard(null);
     setCompleted([]);
+    setDrawnAt(null);
   }
 
   async function drawWeeklyCard() {
@@ -265,14 +271,14 @@ export default function App() {
         week,
         card: newCard,
       })
-      .select("card")
+      .select("card, drawn_at")
       .single();
 
     if (error) {
       if (error.code === "23505") {
         const { data: existingCard, error: reloadError } = await supabase
           .from("weekly_cards")
-          .select("card")
+          .select("card, drawn_at")
           .eq("user_id", user.id)
           .eq("year", year)
           .eq("week", week)
@@ -282,27 +288,21 @@ export default function App() {
           setMessage(`Vorhandene Karte konnte nicht geladen werden: ${reloadError.message}`);
         } else {
           setCard(existingCard.card);
+          setDrawnAt(existingCard.drawn_at);
         }
       } else {
         setMessage(`Karte konnte nicht gezogen werden: ${error.message}`);
       }
     } else {
       setCard(data.card);
+      setDrawnAt(data.drawn_at);
     }
 
     setCardLoading(false);
   }
 
   async function triggerEvent(eventId) {
-    if (!card || !user) return;
-
-    const matchingIndexes = card
-      .map((event, index) => (event.id === eventId ? index : null))
-      .filter((index) => index !== null);
-
-    const newIndexes = matchingIndexes.filter(
-      (index) => !completed.includes(index)
-    );
+    if (!user) return;
 
     const event = EVENTS.find((item) => item.id === eventId);
     const time = new Date().toLocaleTimeString("de-DE", {
@@ -310,36 +310,17 @@ export default function App() {
       minute: "2-digit",
     });
 
-    if (newIndexes.length === 0) {
-      setEventLog((previous) =>
-        [
-          {
-            text: event.text,
-            time,
-            hit: false,
-          },
-          ...previous,
-        ].slice(0, 8)
-      );
-      return;
-    }
-
-    const { error } = await supabase.from("card_progress").insert({
-      user_id: user.id,
+    const { error } = await supabase.from("event_triggers").insert({
+      event_id: eventId,
+      triggered_by: user.id,
       year,
       week,
-      event_id: eventId,
     });
 
-    if (error && error.code !== "23505") {
-      setMessage(`Fortschritt konnte nicht gespeichert werden: ${error.message}`);
+    if (error) {
+      setMessage(`Event konnte nicht ausgelöst werden: ${error.message}`);
       return;
     }
-
-    setCompleted((previous) => {
-      const merged = new Set([...previous, ...newIndexes]);
-      return [...merged].sort((a, b) => a - b);
-    });
 
     setEventLog((previous) =>
       [
@@ -352,6 +333,69 @@ export default function App() {
       ].slice(0, 8)
     );
   }
+
+  useEffect(() => {
+    if (!user || !card || !drawnAt) return undefined;
+
+    async function applyGlobalTrigger(trigger) {
+      if (trigger.year !== year || trigger.week !== week) return;
+
+      const triggerTime = new Date(trigger.triggered_at).getTime();
+      const drawTime = new Date(drawnAt).getTime();
+
+      if (triggerTime < drawTime) return;
+
+      const matchingIndexes = card
+        .map((event, index) => (event.id === trigger.event_id ? index : null))
+        .filter((index) => index !== null);
+
+      if (matchingIndexes.length === 0) return;
+
+      const { error } = await supabase.from("card_progress").upsert(
+        {
+          user_id: user.id,
+          year,
+          week,
+          event_id: trigger.event_id,
+        },
+        {
+          onConflict: "user_id,year,week,event_id",
+          ignoreDuplicates: true,
+        }
+      );
+
+      if (error) {
+        setMessage(`Fortschritt konnte nicht gespeichert werden: ${error.message}`);
+        return;
+      }
+
+      setCompleted((previous) => {
+        const merged = new Set([...previous, ...matchingIndexes]);
+        return [...merged].sort((a, b) => a - b);
+      });
+    }
+
+    const channel = supabase
+      .channel(`bingo-events-${user.id}-${year}-${week}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "event_triggers",
+          filter: `week=eq.${week}`,
+        },
+        (payload) => {
+          applyGlobalTrigger(payload.new);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, card, drawnAt, year, week]);
+
 
   const twitchName =
     user?.user_metadata?.preferred_username ||
@@ -374,6 +418,16 @@ export default function App() {
   );
 
   const fullBingo = Boolean(card) && completed.length === 16;
+
+  const filteredAdminEvents = useMemo(() => {
+    const query = adminSearch.trim().toLowerCase();
+
+    if (!query) return EVENTS;
+
+    return EVENTS.filter((event) =>
+      event.text.toLowerCase().includes(query)
+    );
+  }, [adminSearch]);
 
   if (loading) {
     return (
@@ -508,13 +562,25 @@ export default function App() {
               <h2>Event-Trigger</h2>
             </div>
             <p>
-              Dieser Bereich ist nur über die Admin-URL sichtbar. Treffer
-              werden jetzt dauerhaft in Supabase gespeichert.
+              Ein Trigger wird live an alle geöffneten Wochenkarten gesendet.
+              Nutzer ohne passendes Feld erhalten keinen Fortschritt.
             </p>
           </div>
 
+          <div className="admin-search">
+            <label htmlFor="admin-event-search">Bingofeld suchen</label>
+            <input
+              id="admin-event-search"
+              type="search"
+              placeholder="z. B. Gleiter, Sub-Bombe oder Pan-Kill"
+              value={adminSearch}
+              onChange={(event) => setAdminSearch(event.target.value)}
+            />
+            <span>{filteredAdminEvents.length} Felder gefunden</span>
+          </div>
+
           <div className="admin-grid">
-            {EVENTS.map((event) => (
+            {filteredAdminEvents.map((event) => (
               <button
                 key={event.id}
                 onClick={() => triggerEvent(event.id)}
@@ -535,10 +601,9 @@ export default function App() {
               eventLog.map((event, index) => (
                 <div
                   key={`${event.time}-${event.text}-${index}`}
-                  className={event.hit ? "event-hit" : "event-miss"}
+                  className="event-hit"
                 >
-                  {event.time} · {event.text}{" "}
-                  {event.hit ? "✓" : "— nicht auf dieser Karte"}
+                  {event.time} · {event.text} · global ausgelöst ✓
                 </div>
               ))
             )}
