@@ -10,6 +10,11 @@ const RARITY = {
   legendary: { xp: 20 },
 };
 
+// Twitch-Namen immer kleingeschrieben eintragen.
+// Weitere Mods können später einfach ergänzt werden.
+const ADMIN_TWITCH_NAMES = ["pdmfoofighter", "bierbankb"];
+const MOD_TWITCH_NAMES = [];
+
 const EVENTS = [
   { id: "bridge", text: "Brückencamping (volle Blockade)", rarity: "rare" },
   { id: "sparen", text: '"Reichtum durch sparen!"', rarity: "common" },
@@ -131,12 +136,9 @@ export default function App() {
   const [completed, setCompleted] = useState([]);
   const [eventLog, setEventLog] = useState([]);
   const [adminSearch, setAdminSearch] = useState("");
-  const [drawnAt, setDrawnAt] = useState(null);
+  const [justDrawn, setJustDrawn] = useState(false);
+  const [showRules, setShowRules] = useState(false);
   const [message, setMessage] = useState("");
-
-  const [adminMode] = useState(() => {
-    return new URLSearchParams(window.location.search).get("admin") === "1";
-  });
 
   const { year, week } = useMemo(() => getIsoWeekData(), []);
 
@@ -167,7 +169,6 @@ export default function App() {
     if (!user) {
       setCard(null);
       setCompleted([]);
-      setDrawnAt(null);
       return;
     }
 
@@ -178,7 +179,7 @@ export default function App() {
 
       const { data: cardData, error: cardError } = await supabase
         .from("weekly_cards")
-        .select("card, drawn_at")
+        .select("card")
         .eq("user_id", user.id)
         .eq("year", year)
         .eq("week", week)
@@ -193,12 +194,10 @@ export default function App() {
 
       const loadedCard = cardData?.card ?? null;
       setCard(loadedCard);
-      setDrawnAt(cardData?.drawn_at ?? null);
       setCardLoading(false);
 
       if (!loadedCard) {
         setCompleted([]);
-        setDrawnAt(null);
         setProgressLoading(false);
         return;
       }
@@ -252,7 +251,6 @@ export default function App() {
     setUser(null);
     setCard(null);
     setCompleted([]);
-    setDrawnAt(null);
   }
 
   async function drawWeeklyCard() {
@@ -271,14 +269,14 @@ export default function App() {
         week,
         card: newCard,
       })
-      .select("card, drawn_at")
+      .select("card")
       .single();
 
     if (error) {
       if (error.code === "23505") {
         const { data: existingCard, error: reloadError } = await supabase
           .from("weekly_cards")
-          .select("card, drawn_at")
+          .select("card")
           .eq("user_id", user.id)
           .eq("year", year)
           .eq("week", week)
@@ -288,21 +286,27 @@ export default function App() {
           setMessage(`Vorhandene Karte konnte nicht geladen werden: ${reloadError.message}`);
         } else {
           setCard(existingCard.card);
-          setDrawnAt(existingCard.drawn_at);
         }
       } else {
         setMessage(`Karte konnte nicht gezogen werden: ${error.message}`);
       }
     } else {
       setCard(data.card);
-      setDrawnAt(data.drawn_at);
     }
 
     setCardLoading(false);
   }
 
   async function triggerEvent(eventId) {
-    if (!user) return;
+    if (!card || !user) return;
+
+    const matchingIndexes = card
+      .map((event, index) => (event.id === eventId ? index : null))
+      .filter((index) => index !== null);
+
+    const newIndexes = matchingIndexes.filter(
+      (index) => !completed.includes(index)
+    );
 
     const event = EVENTS.find((item) => item.id === eventId);
     const time = new Date().toLocaleTimeString("de-DE", {
@@ -310,17 +314,36 @@ export default function App() {
       minute: "2-digit",
     });
 
-    const { error } = await supabase.from("event_triggers").insert({
-      event_id: eventId,
-      triggered_by: user.id,
-      year,
-      week,
-    });
-
-    if (error) {
-      setMessage(`Event konnte nicht ausgelöst werden: ${error.message}`);
+    if (newIndexes.length === 0) {
+      setEventLog((previous) =>
+        [
+          {
+            text: event.text,
+            time,
+            hit: false,
+          },
+          ...previous,
+        ].slice(0, 8)
+      );
       return;
     }
+
+    const { error } = await supabase.from("card_progress").insert({
+      user_id: user.id,
+      year,
+      week,
+      event_id: eventId,
+    });
+
+    if (error && error.code !== "23505") {
+      setMessage(`Fortschritt konnte nicht gespeichert werden: ${error.message}`);
+      return;
+    }
+
+    setCompleted((previous) => {
+      const merged = new Set([...previous, ...newIndexes]);
+      return [...merged].sort((a, b) => a - b);
+    });
 
     setEventLog((previous) =>
       [
@@ -334,74 +357,30 @@ export default function App() {
     );
   }
 
-  useEffect(() => {
-    if (!user || !card || !drawnAt) return undefined;
-
-    async function applyGlobalTrigger(trigger) {
-      if (trigger.year !== year || trigger.week !== week) return;
-
-      const triggerTime = new Date(trigger.triggered_at).getTime();
-      const drawTime = new Date(drawnAt).getTime();
-
-      if (triggerTime < drawTime) return;
-
-      const matchingIndexes = card
-        .map((event, index) => (event.id === trigger.event_id ? index : null))
-        .filter((index) => index !== null);
-
-      if (matchingIndexes.length === 0) return;
-
-      const { error } = await supabase.from("card_progress").upsert(
-        {
-          user_id: user.id,
-          year,
-          week,
-          event_id: trigger.event_id,
-        },
-        {
-          onConflict: "user_id,year,week,event_id",
-          ignoreDuplicates: true,
-        }
-      );
-
-      if (error) {
-        setMessage(`Fortschritt konnte nicht gespeichert werden: ${error.message}`);
-        return;
-      }
-
-      setCompleted((previous) => {
-        const merged = new Set([...previous, ...matchingIndexes]);
-        return [...merged].sort((a, b) => a - b);
-      });
-    }
-
-    const channel = supabase
-      .channel(`bingo-events-${user.id}-${year}-${week}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "event_triggers",
-          filter: `week=eq.${week}`,
-        },
-        (payload) => {
-          applyGlobalTrigger(payload.new);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user, card, drawnAt, year, week]);
-
-
   const twitchName =
     user?.user_metadata?.preferred_username ||
     user?.user_metadata?.name ||
     user?.email ||
     "Twitch User";
+
+  const normalizedTwitchName = twitchName.toLowerCase();
+  const isAdmin = ADMIN_TWITCH_NAMES.includes(normalizedTwitchName);
+  const isMod = MOD_TWITCH_NAMES.includes(normalizedTwitchName);
+  const canTriggerEvents = isAdmin || isMod;
+
+  const filteredAdminEvents = useMemo(() => {
+    const query = adminSearch.trim().toLowerCase();
+
+    if (!query) return EVENTS;
+
+    return EVENTS.filter((event) =>
+      event.text.toLowerCase().includes(query)
+    );
+  }, [adminSearch]);
+
+  const hasLegendaryField = Boolean(
+    card?.some((event) => event.rarity === "legendary")
+  );
 
   const score = useMemo(() => {
     if (!card) return 0;
@@ -419,21 +398,11 @@ export default function App() {
 
   const fullBingo = Boolean(card) && completed.length === 16;
 
-  const filteredAdminEvents = useMemo(() => {
-    const query = adminSearch.trim().toLowerCase();
-
-    if (!query) return EVENTS;
-
-    return EVENTS.filter((event) =>
-      event.text.toLowerCase().includes(query)
-    );
-  }, [adminSearch]);
-
   if (loading) {
     return (
       <main className="page center">
         <section className="card login">
-          <h1>Bierbank Bingo Alpha</h1>
+          <h1>Bierbank Bingo</h1>
           <p>Login wird geprüft...</p>
         </section>
       </main>
@@ -444,11 +413,11 @@ export default function App() {
     return (
       <main className="page center">
         <section className="card login">
-          <div className="tag">Alpha</div>
+          <div className="tag">Ultimate Alpha</div>
           <h1>Bierbank Bingo</h1>
           <p>
             Ziehe deine persönliche Wochenkarte und sammle während der Streams
-            Bingo-Felder.
+            automatisch ausgelöste Bingo-Felder.
           </p>
 
           {message && <p className="error-message">{message}</p>}
@@ -476,7 +445,7 @@ export default function App() {
     return (
       <main className="page center">
         <section className="card draw-card">
-          <div className="tag">Bierbank Bingo Alpha</div>
+          <div className="tag">Ultimate Alpha</div>
           <p className="eyebrow">
             KW {week}/{year}
           </p>
@@ -489,8 +458,12 @@ export default function App() {
 
           {message && <p className="error-message">{message}</p>}
 
-          <button className="primary-button" onClick={drawWeeklyCard}>
-            Wochenkarte ziehen
+          <div className="draw-preview" aria-hidden="true">
+            <span>?</span><span>?</span><span>?</span><span>?</span>
+          </div>
+
+          <button className="primary-button draw-button" onClick={drawWeeklyCard}>
+            Wochenkarte öffnen
           </button>
 
           <button className="secondary-button" onClick={logout}>
@@ -506,7 +479,7 @@ export default function App() {
       <header className="header">
         <div>
           <div className="brand-line">
-            <span className="alpha-badge">Alpha</span>
+            <span className="alpha-badge">Ultimate Alpha</span>
             <h1>Bierbank Bingo</h1>
           </div>
 
@@ -515,6 +488,9 @@ export default function App() {
           </p>
           <p className="user-line">
             Eingeloggt als <strong>{twitchName}</strong>
+            {canTriggerEvents && (
+              <span className="role-badge">{isAdmin ? "Admin" : "Mod"}</span>
+            )}
           </p>
         </div>
 
@@ -530,11 +506,46 @@ export default function App() {
             <span>Bingo</span>
           </div>
 
-          <button className="secondary-button compact" onClick={logout}>
-            Logout
-          </button>
+          <div className="header-button-row">
+            <button
+              className="secondary-button compact"
+              onClick={() => setShowRules((value) => !value)}
+            >
+              {showRules ? "Regeln schließen" : "Regeln"}
+            </button>
+            <button className="secondary-button compact" onClick={logout}>
+              Logout
+            </button>
+          </div>
         </div>
       </header>
+
+      {showRules && (
+        <section className="rules-panel">
+          <h2>So funktioniert die Alpha</h2>
+          <div className="rules-grid">
+            <div><strong>1.</strong><span>Sonntags neue Wochenkarte öffnen.</span></div>
+            <div><strong>2.</strong><span>Nur Ereignisse nach dem Ziehen zählen.</span></div>
+            <div><strong>3.</strong><span>Admins und Mods lösen Felder aus.</span></div>
+            <div><strong>4.</strong><span>Fortschritt bleibt dauerhaft gespeichert.</span></div>
+          </div>
+        </section>
+      )}
+
+      {justDrawn && (
+        <section className={`draw-result ${hasLegendaryField ? "legendary-result" : ""}`}>
+          <strong>
+            {hasLegendaryField
+              ? "Legendary-Karte gezogen!"
+              : "Deine neue Wochenkarte ist bereit!"}
+          </strong>
+          <span>
+            {hasLegendaryField
+              ? "Auf deiner Karte befindet sich ein seltenes Legendary-Feld."
+              : "Ab jetzt können passende Stream-Ereignisse gesammelt werden."}
+          </span>
+        </section>
+      )}
 
       {message && (
         <section className="status-message">
@@ -546,7 +557,10 @@ export default function App() {
         {card.map((event, index) => (
           <div
             key={`${event.id}-${index}`}
-            className={`tile ${completed.includes(index) ? "done" : ""}`}
+            className={`tile ${completed.includes(index) ? "done" : ""} ${
+              justDrawn ? "tile-reveal" : ""
+            }`}
+            style={justDrawn ? { animationDelay: `${index * 65}ms` } : undefined}
           >
             <span>{event.text}</span>
             <b>{RARITY[event.rarity].xp} XP</b>
@@ -554,31 +568,34 @@ export default function App() {
         ))}
       </section>
 
-      {adminMode && (
+      {canTriggerEvents && (
         <section className="admin-panel">
           <div className="admin-heading">
             <div>
-              <span className="alpha-badge">Admin-Demo</span>
+              <span className="alpha-badge">{isAdmin ? "Admin" : "Mod"}</span>
               <h2>Event-Trigger</h2>
             </div>
             <p>
-              Ein Trigger wird live an alle geöffneten Wochenkarten gesendet.
-              Nutzer ohne passendes Feld erhalten keinen Fortschritt.
+              Dieser Bereich ist ausschließlich für freigeschaltete Twitch-
+              Accounts sichtbar. Treffer werden dauerhaft gespeichert.
             </p>
           </div>
 
           <div className="admin-search">
-            <label htmlFor="admin-event-search">Bingofeld suchen</label>
+            <label htmlFor="admin-search">Bingofeld suchen</label>
             <input
-              id="admin-event-search"
+              id="admin-search"
               type="search"
               placeholder="z. B. Gleiter, Sub-Bombe oder Pan-Kill"
               value={adminSearch}
               onChange={(event) => setAdminSearch(event.target.value)}
             />
-            <span>{filteredAdminEvents.length} Felder gefunden</span>
+            <span>{filteredAdminEvents.length} Treffer</span>
           </div>
 
+          {filteredAdminEvents.length === 0 ? (
+            <p className="no-results">Kein passendes Bingofeld gefunden.</p>
+          ) : (
           <div className="admin-grid">
             {filteredAdminEvents.map((event) => (
               <button
@@ -591,6 +608,7 @@ export default function App() {
               </button>
             ))}
           </div>
+          )}
 
           <div className="event-log">
             <h3>Eventlog</h3>
@@ -601,9 +619,10 @@ export default function App() {
               eventLog.map((event, index) => (
                 <div
                   key={`${event.time}-${event.text}-${index}`}
-                  className="event-hit"
+                  className={event.hit ? "event-hit" : "event-miss"}
                 >
-                  {event.time} · {event.text} · global ausgelöst ✓
+                  {event.time} · {event.text}{" "}
+                  {event.hit ? "✓" : "— nicht auf dieser Karte"}
                 </div>
               ))
             )}
