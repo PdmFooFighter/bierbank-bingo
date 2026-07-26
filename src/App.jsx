@@ -12,8 +12,9 @@ const RARITY = {
 
 // Twitch-Namen immer kleingeschrieben eintragen.
 // Weitere Mods können später einfach ergänzt werden.
-const ADMIN_TWITCH_NAMES = ["pdm_foofighter", "bierbankb"];
-const MOD_TWITCH_NAMES = ["tomhagt"];
+const ADMIN_TWITCH_NAMES = ["pdmfoofighter", "bierbankb"];
+const MOD_TWITCH_NAMES = [];
+const RULES_VERSION = "alpha-1";
 
 const EVENTS = [
   { id: "bridge", text: "Brückencamping (volle Blockade)", rarity: "rare" },
@@ -136,8 +137,13 @@ export default function App() {
   const [completed, setCompleted] = useState([]);
   const [eventLog, setEventLog] = useState([]);
   const [adminSearch, setAdminSearch] = useState("");
+  const [adminSort, setAdminSort] = useState("xp-desc");
   const [justDrawn, setJustDrawn] = useState(false);
   const [showRules, setShowRules] = useState(false);
+  const [rulesAccepted, setRulesAccepted] = useState(false);
+  const [rulesLoading, setRulesLoading] = useState(true);
+  const [acceptingRules, setAcceptingRules] = useState(false);
+  const [rulesConfirmed, setRulesConfirmed] = useState(false);
   const [message, setMessage] = useState("");
 
   const { year, week } = useMemo(() => getIsoWeekData(), []);
@@ -164,6 +170,36 @@ export default function App() {
 
     return () => subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setRulesAccepted(false);
+      setRulesLoading(false);
+      return;
+    }
+
+    async function loadRuleAcceptance() {
+      setRulesLoading(true);
+
+      const { data, error } = await supabase
+        .from("rule_acceptances")
+        .select("rules_version")
+        .eq("user_id", user.id)
+        .eq("rules_version", RULES_VERSION)
+        .maybeSingle();
+
+      if (error) {
+        setMessage(`Regelbestätigung konnte nicht geprüft werden: ${error.message}`);
+        setRulesAccepted(false);
+      } else {
+        setRulesAccepted(Boolean(data));
+      }
+
+      setRulesLoading(false);
+    }
+
+    loadRuleAcceptance();
+  }, [user]);
 
   useEffect(() => {
     if (!user) {
@@ -230,6 +266,31 @@ export default function App() {
 
     loadWeeklyData();
   }, [user, year, week]);
+
+  async function acceptRules() {
+    if (!user || !rulesConfirmed || acceptingRules) return;
+
+    setAcceptingRules(true);
+    setMessage("");
+
+    const { error } = await supabase.from("rule_acceptances").upsert(
+      {
+        user_id: user.id,
+        rules_version: RULES_VERSION,
+      },
+      {
+        onConflict: "user_id,rules_version",
+      }
+    );
+
+    if (error) {
+      setMessage(`Regeln konnten nicht bestätigt werden: ${error.message}`);
+    } else {
+      setRulesAccepted(true);
+    }
+
+    setAcceptingRules(false);
+  }
 
   async function loginWithTwitch() {
     setMessage("");
@@ -357,11 +418,77 @@ export default function App() {
     );
   }
 
+
+  async function undoLastTrigger() {
+    if (!user || !card) return;
+
+    setMessage("");
+
+    const { data: latest, error: loadError } = await supabase
+      .from("card_progress")
+      .select("id, event_id, completed_at")
+      .eq("user_id", user.id)
+      .eq("year", year)
+      .eq("week", week)
+      .order("completed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (loadError) {
+      setMessage(`Letzter Trigger konnte nicht gefunden werden: ${loadError.message}`);
+      return;
+    }
+
+    if (!latest) {
+      setMessage("Es gibt keinen gespeicherten Trigger zum Rückgängigmachen.");
+      return;
+    }
+
+    const { error: deleteError } = await supabase
+      .from("card_progress")
+      .delete()
+      .eq("id", latest.id);
+
+    if (deleteError) {
+      setMessage(`Trigger konnte nicht rückgängig gemacht werden: ${deleteError.message}`);
+      return;
+    }
+
+    const removedIndexes = card
+      .map((event, index) => (event.id === latest.event_id ? index : null))
+      .filter((index) => index !== null);
+
+    setCompleted((previous) =>
+      previous.filter((index) => !removedIndexes.includes(index))
+    );
+
+    const removedEvent = EVENTS.find((event) => event.id === latest.event_id);
+
+    setEventLog((previous) => [
+      {
+        text: `${removedEvent?.text ?? latest.event_id} rückgängig gemacht`,
+        time: new Date().toLocaleTimeString("de-DE", {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        hit: false,
+      },
+      ...previous,
+    ].slice(0, 8));
+  }
+
+
   const twitchName =
     user?.user_metadata?.preferred_username ||
     user?.user_metadata?.name ||
     user?.email ||
     "Twitch User";
+
+  const twitchAvatar =
+    user?.user_metadata?.avatar_url ||
+    user?.user_metadata?.picture ||
+    user?.user_metadata?.profile_image_url ||
+    null;
 
   const normalizedTwitchName = twitchName.toLowerCase();
   const isAdmin = ADMIN_TWITCH_NAMES.includes(normalizedTwitchName);
@@ -371,12 +498,19 @@ export default function App() {
   const filteredAdminEvents = useMemo(() => {
     const query = adminSearch.trim().toLowerCase();
 
-    if (!query) return EVENTS;
-
-    return EVENTS.filter((event) =>
+    const filtered = EVENTS.filter((event) =>
       event.text.toLowerCase().includes(query)
     );
-  }, [adminSearch]);
+
+    return [...filtered].sort((a, b) => {
+      const xpA = RARITY[a.rarity].xp;
+      const xpB = RARITY[b.rarity].xp;
+
+      if (adminSort === "xp-asc") return xpA - xpB || a.text.localeCompare(b.text);
+      if (adminSort === "alpha") return a.text.localeCompare(b.text);
+      return xpB - xpA || a.text.localeCompare(b.text);
+    });
+  }, [adminSearch, adminSort]);
 
   const hasLegendaryField = Boolean(
     card?.some((event) => event.rarity === "legendary")
@@ -429,13 +563,90 @@ export default function App() {
     );
   }
 
-  if (cardLoading || progressLoading) {
+  if (cardLoading || progressLoading || rulesLoading) {
     return (
       <main className="page center">
         <section className="card login">
           <div className="tag">Alpha</div>
           <h1>Bierbank Bingo</h1>
           <p>Deine Wochenkarte und dein Fortschritt werden geladen...</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!rulesAccepted) {
+    return (
+      <main className="page center rules-gate-page">
+        <section className="card rules-gate">
+          <div className="tag">Ultimate Alpha</div>
+          <p className="eyebrow">Teilnahmebedingungen</p>
+          <h1>Fair spielen. Stream genießen.</h1>
+          <p className="rules-intro">
+            Das Bingo soll den Stream unterhaltsamer machen, ohne BierbankBs
+            Spielweise oder die Community negativ zu beeinflussen.
+          </p>
+
+          <div className="mandatory-rules">
+            <article>
+              <strong>Keine automatischen Trigger</strong>
+              <span>
+                Felder werden ausschließlich durch den Ersteller des Bingos oder
+                freigeschaltete Mods ausgelöst.
+              </span>
+            </article>
+
+            <article>
+              <strong>Kein Backseat Gaming</strong>
+              <span>
+                BierbankB spielt wie immer. Keine Taktiken, Orte, Waffen oder
+                Aktionen verlangen, nur um ein Bingofeld zu erfüllen.
+              </span>
+            </article>
+
+            <article>
+              <strong>Keine Support-Aufforderungen</strong>
+              <span>
+                Keine Spenden, Subs, Sub-Bomben oder andere Community-Events
+                fordern. Entweder man hat Glück oder übt sich in Geduld.
+              </span>
+            </article>
+
+            <article>
+              <strong>Konsequenzen bei Missbrauch</strong>
+              <span>
+                Verstöße können zum Ausschluss aus der App, zur Account-Sperre
+                oder zu einem Twitch-Ban führen. Wiederholter Missbrauch kann
+                zur Einstellung des Bingos führen.
+              </span>
+            </article>
+          </div>
+
+          <label className="rules-checkbox">
+            <input
+              type="checkbox"
+              checked={rulesConfirmed}
+              onChange={(event) => setRulesConfirmed(event.target.checked)}
+            />
+            <span>
+              Ich habe die Regeln gelesen und werde weder Backseat Gaming
+              betreiben noch Events, Subs, Spenden oder Aktionen einfordern.
+            </span>
+          </label>
+
+          {message && <p className="error-message">{message}</p>}
+
+          <button
+            className="primary-button"
+            onClick={acceptRules}
+            disabled={!rulesConfirmed || acceptingRules}
+          >
+            {acceptingRules ? "Wird gespeichert..." : "Regeln bestätigen"}
+          </button>
+
+          <button className="secondary-button rules-logout" onClick={logout}>
+            Logout
+          </button>
         </section>
       </main>
     );
@@ -486,12 +697,24 @@ export default function App() {
           <p>
             KW {week}/{year} · gültig bis Samstag, 23:59 Uhr
           </p>
-          <p className="user-line">
-            Eingeloggt als <strong>{twitchName}</strong>
+          <div className="user-line">
+            {twitchAvatar ? (
+              <img
+                className="twitch-avatar"
+                src={twitchAvatar}
+                alt=""
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <span className="avatar-fallback">
+                {twitchName.slice(0, 1).toUpperCase()}
+              </span>
+            )}
+            <strong>{twitchName}</strong>
             {canTriggerEvents && (
               <span className="role-badge">{isAdmin ? "Admin" : "Mod"}</span>
             )}
-          </p>
+          </div>
         </div>
 
         <div className="header-actions">
@@ -522,12 +745,28 @@ export default function App() {
 
       {showRules && (
         <section className="rules-panel">
-          <h2>So funktioniert die Alpha</h2>
+          <div className="section-heading">
+            <span className="alpha-badge">Regeln</span>
+            <h2>Bierbank spielt wie immer – das Bingo bleibt im Hintergrund.</h2>
+          </div>
+
           <div className="rules-grid">
-            <div><strong>1.</strong><span>Sonntags neue Wochenkarte öffnen.</span></div>
-            <div><strong>2.</strong><span>Nur Ereignisse nach dem Ziehen zählen.</span></div>
-            <div><strong>3.</strong><span>Admins und Mods lösen Felder aus.</span></div>
-            <div><strong>4.</strong><span>Fortschritt bleibt dauerhaft gespeichert.</span></div>
+            <div>
+              <strong>Keine automatischen Trigger</strong>
+              <span>Nur der Bingo-Ersteller und freigeschaltete Mods lösen Felder aus.</span>
+            </div>
+            <div>
+              <strong>Kein Backseat Gaming</strong>
+              <span>Keine Spielzüge oder Aktionen verlangen, um Felder zu erfüllen.</span>
+            </div>
+            <div>
+              <strong>Kein Betteln nach Support</strong>
+              <span>Keine Subs, Spenden, Raids oder Sub-Bomben einfordern.</span>
+            </div>
+            <div>
+              <strong>Fair bleiben</strong>
+              <span>Missbrauch kann zum App-Ausschluss, zur Sperre oder zum Ban führen.</span>
+            </div>
           </div>
         </section>
       )}
@@ -557,9 +796,9 @@ export default function App() {
         {card.map((event, index) => (
           <div
             key={`${event.id}-${index}`}
-            className={`tile ${completed.includes(index) ? "done" : ""} ${
-              justDrawn ? "tile-reveal" : ""
-            }`}
+            className={`tile xp-${RARITY[event.rarity].xp} ${
+              completed.includes(index) ? "done" : ""
+            } ${justDrawn ? "tile-reveal" : ""}`}
             style={justDrawn ? { animationDelay: `${index * 65}ms` } : undefined}
           >
             <span>{event.text}</span>
@@ -581,16 +820,35 @@ export default function App() {
             </p>
           </div>
 
-          <div className="admin-search">
-            <label htmlFor="admin-search">Bingofeld suchen</label>
-            <input
-              id="admin-search"
-              type="search"
-              placeholder="z. B. Gleiter, Sub-Bombe oder Pan-Kill"
-              value={adminSearch}
-              onChange={(event) => setAdminSearch(event.target.value)}
-            />
-            <span>{filteredAdminEvents.length} Treffer</span>
+          <div className="admin-toolbar">
+            <div className="admin-search">
+              <label htmlFor="admin-search">Bingofeld suchen</label>
+              <input
+                id="admin-search"
+                type="search"
+                placeholder="z. B. Gleiter, Sub-Bombe oder Pan-Kill"
+                value={adminSearch}
+                onChange={(event) => setAdminSearch(event.target.value)}
+              />
+              <span>{filteredAdminEvents.length} Treffer</span>
+            </div>
+
+            <div className="admin-sort">
+              <label htmlFor="admin-sort">Sortierung</label>
+              <select
+                id="admin-sort"
+                value={adminSort}
+                onChange={(event) => setAdminSort(event.target.value)}
+              >
+                <option value="xp-desc">XP: hoch nach niedrig</option>
+                <option value="xp-asc">XP: niedrig nach hoch</option>
+                <option value="alpha">Alphabetisch</option>
+              </select>
+            </div>
+
+            <button className="undo-button" onClick={undoLastTrigger}>
+              Letzten Trigger rückgängig
+            </button>
           </div>
 
           {filteredAdminEvents.length === 0 ? (
@@ -619,7 +877,7 @@ export default function App() {
               eventLog.map((event, index) => (
                 <div
                   key={`${event.time}-${event.text}-${index}`}
-                  className={event.hit ? "event-hit" : "event-miss"}
+                  className={event.hit ? "event-hit" : "event-undo"}
                 >
                   {event.time} · {event.text}{" "}
                   {event.hit ? "✓" : "— nicht auf dieser Karte"}

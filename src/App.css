@@ -506,3 +506,275 @@ small {
     white-space: normal;
   }
 }
+
+
+/* Ultimate Alpha v2 */
+
+.login h1,
+.draw-card h1,
+.rules-gate h1 {
+  margin-top: 16px;
+  margin-bottom: 14px;
+}
+
+.login p,
+.draw-card p,
+.rules-gate p {
+  margin-top: 0;
+  margin-bottom: 18px;
+}
+
+.brand-line {
+  margin-bottom: 12px;
+}
+
+.header > div:first-child > p {
+  margin-top: 8px;
+}
+
+.user-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px !important;
+  color: #e4e4e7;
+}
+
+.twitch-avatar,
+.avatar-fallback {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  flex: 0 0 38px;
+}
+
+.twitch-avatar {
+  object-fit: cover;
+  border: 2px solid rgba(167, 139, 250, 0.65);
+}
+
+.avatar-fallback {
+  display: grid;
+  place-items: center;
+  background: #7c3aed;
+  border: 2px solid rgba(167, 139, 250, 0.65);
+  font-weight: 900;
+}
+
+.section-heading {
+  margin-bottom: 20px;
+}
+
+.section-heading h2 {
+  margin: 12px 0 0;
+  max-width: 780px;
+  line-height: 1.25;
+}
+
+.rules-panel,
+.admin-panel {
+  padding: 28px;
+}
+
+.rules-grid div {
+  min-height: 96px;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rules-grid div strong {
+  color: #f4f4f5;
+}
+
+.rules-gate-page {
+  padding-top: 28px;
+  padding-bottom: 28px;
+}
+
+.rules-gate {
+  width: min(100%, 760px);
+  max-width: 760px;
+}
+
+.rules-intro {
+  font-size: 17px;
+}
+
+.mandatory-rules {
+  display: grid;
+  gap: 10px;
+  margin: 22px 0;
+}
+
+.mandatory-rules article {
+  display: grid;
+  gap: 6px;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.mandatory-rules article strong {
+  color: #f4f4f5;
+}
+
+.mandatory-rules article span {
+  color: #c4c4cc;
+  line-height: 1.5;
+}
+
+.rules-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 20px 0 4px;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(124, 58, 237, 0.12);
+  border: 1px solid rgba(167, 139, 250, 0.35);
+  color: #e4e4e7;
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.rules-checkbox input {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  accent-color: #8b5cf6;
+  flex: 0 0 20px;
+}
+
+.rules-gate .primary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  box-shadow: none;
+}
+
+.rules-logout {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.tile {
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.tile:hover {
+  transform: translateY(-2px);
+}
+
+.tile.xp-1 {
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+.tile.xp-3 {
+  border-color: rgba(96, 165, 250, 0.38);
+  background: linear-gradient(145deg, rgba(59, 130, 246, 0.08), rgba(255, 255, 255, 0.055));
+}
+
+.tile.xp-5 {
+  border-color: rgba(167, 139, 250, 0.42);
+  background: linear-gradient(145deg, rgba(124, 58, 237, 0.1), rgba(255, 255, 255, 0.055));
+}
+
+.tile.xp-10 {
+  border-color: rgba(251, 146, 60, 0.48);
+  background: linear-gradient(145deg, rgba(234, 88, 12, 0.12), rgba(255, 255, 255, 0.055));
+}
+
+.tile.xp-20 {
+  border-color: rgba(250, 204, 21, 0.7);
+  background: linear-gradient(145deg, rgba(202, 138, 4, 0.2), rgba(255, 255, 255, 0.06));
+  box-shadow: inset 0 0 22px rgba(250, 204, 21, 0.06);
+}
+
+.tile.done {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: rgba(110, 231, 183, 0.8);
+}
+
+.admin-toolbar {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(210px, 260px) auto;
+  gap: 14px;
+  align-items: end;
+  margin-bottom: 24px;
+}
+
+.admin-search {
+  margin-bottom: 0;
+  grid-template-columns: minmax(180px, 1fr) auto;
+}
+
+.admin-sort {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-sort label {
+  color: #e4e4e7;
+  font-weight: 800;
+}
+
+.admin-sort select {
+  min-height: 48px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  background: #151522;
+  color: white;
+  font: inherit;
+  outline: none;
+}
+
+.undo-button {
+  min-height: 48px;
+  padding: 0 16px;
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  border-radius: 14px;
+  background: rgba(127, 29, 29, 0.25);
+  color: #fecaca;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.undo-button:hover {
+  background: rgba(153, 27, 27, 0.38);
+}
+
+.event-undo {
+  color: #fcd34d;
+  margin-top: 8px;
+}
+
+@media (max-width: 900px) {
+  .admin-toolbar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .undo-button {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 700px) {
+  .admin-toolbar,
+  .admin-search {
+    grid-template-columns: 1fr;
+  }
+
+  .undo-button {
+    grid-column: auto;
+  }
+
+  .rules-gate {
+    padding: 22px;
+  }
+
+  .rules-grid {
+    grid-template-columns: 1fr;
+  }
+}
