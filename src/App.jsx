@@ -126,6 +126,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [cardLoading, setCardLoading] = useState(false);
+  const [progressLoading, setProgressLoading] = useState(false);
   const [card, setCard] = useState(null);
   const [completed, setCompleted] = useState([]);
   const [eventLog, setEventLog] = useState([]);
@@ -167,11 +168,12 @@ export default function App() {
       return;
     }
 
-    async function loadWeeklyCard() {
+    async function loadWeeklyData() {
       setCardLoading(true);
+      setProgressLoading(true);
       setMessage("");
 
-      const { data, error } = await supabase
+      const { data: cardData, error: cardError } = await supabase
         .from("weekly_cards")
         .select("card")
         .eq("user_id", user.id)
@@ -179,16 +181,50 @@ export default function App() {
         .eq("week", week)
         .maybeSingle();
 
-      if (error) {
-        setMessage(`Wochenkarte konnte nicht geladen werden: ${error.message}`);
-      } else {
-        setCard(data?.card ?? null);
+      if (cardError) {
+        setMessage(`Wochenkarte konnte nicht geladen werden: ${cardError.message}`);
+        setCardLoading(false);
+        setProgressLoading(false);
+        return;
       }
 
+      const loadedCard = cardData?.card ?? null;
+      setCard(loadedCard);
       setCardLoading(false);
+
+      if (!loadedCard) {
+        setCompleted([]);
+        setProgressLoading(false);
+        return;
+      }
+
+      const { data: progressData, error: progressError } = await supabase
+        .from("card_progress")
+        .select("event_id")
+        .eq("user_id", user.id)
+        .eq("year", year)
+        .eq("week", week);
+
+      if (progressError) {
+        setMessage(`Fortschritt konnte nicht geladen werden: ${progressError.message}`);
+      } else {
+        const completedEventIds = new Set(
+          (progressData ?? []).map((entry) => entry.event_id)
+        );
+
+        const completedIndexes = loadedCard
+          .map((event, index) =>
+            completedEventIds.has(event.id) ? index : null
+          )
+          .filter((index) => index !== null);
+
+        setCompleted(completedIndexes);
+      }
+
+      setProgressLoading(false);
     }
 
-    loadWeeklyCard();
+    loadWeeklyData();
   }, [user, year, week]);
 
   async function loginWithTwitch() {
@@ -257,8 +293,8 @@ export default function App() {
     setCardLoading(false);
   }
 
-  function triggerEvent(eventId) {
-    if (!card) return;
+  async function triggerEvent(eventId) {
+    if (!card || !user) return;
 
     const matchingIndexes = card
       .map((event, index) => (event.id === eventId ? index : null))
@@ -268,21 +304,49 @@ export default function App() {
       (index) => !completed.includes(index)
     );
 
-    if (newIndexes.length > 0) {
-      setCompleted((previous) => [...previous, ...newIndexes]);
+    const event = EVENTS.find((item) => item.id === eventId);
+    const time = new Date().toLocaleTimeString("de-DE", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+    if (newIndexes.length === 0) {
+      setEventLog((previous) =>
+        [
+          {
+            text: event.text,
+            time,
+            hit: false,
+          },
+          ...previous,
+        ].slice(0, 8)
+      );
+      return;
     }
 
-    const event = EVENTS.find((item) => item.id === eventId);
+    const { error } = await supabase.from("card_progress").insert({
+      user_id: user.id,
+      year,
+      week,
+      event_id: eventId,
+    });
+
+    if (error && error.code !== "23505") {
+      setMessage(`Fortschritt konnte nicht gespeichert werden: ${error.message}`);
+      return;
+    }
+
+    setCompleted((previous) => {
+      const merged = new Set([...previous, ...newIndexes]);
+      return [...merged].sort((a, b) => a - b);
+    });
 
     setEventLog((previous) =>
       [
         {
           text: event.text,
-          time: new Date().toLocaleTimeString("de-DE", {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-          hit: newIndexes.length > 0,
+          time,
+          hit: true,
         },
         ...previous,
       ].slice(0, 8)
@@ -342,13 +406,13 @@ export default function App() {
     );
   }
 
-  if (cardLoading) {
+  if (cardLoading || progressLoading) {
     return (
       <main className="page center">
         <section className="card login">
           <div className="tag">Alpha</div>
           <h1>Bierbank Bingo</h1>
-          <p>Deine Wochenkarte wird geladen...</p>
+          <p>Deine Wochenkarte und dein Fortschritt werden geladen...</p>
         </section>
       </main>
     );
@@ -444,8 +508,8 @@ export default function App() {
               <h2>Event-Trigger</h2>
             </div>
             <p>
-              Dieser Bereich ist nur über die Admin-URL sichtbar. Die
-              Fortschrittsspeicherung folgt im nächsten Schritt.
+              Dieser Bereich ist nur über die Admin-URL sichtbar. Treffer
+              werden jetzt dauerhaft in Supabase gespeichert.
             </p>
           </div>
 
