@@ -80,15 +80,27 @@ function pickByRarity(rarity, count) {
 function createCard() {
   const hasLegendary = Math.random() < 0.05;
 
-  const card = [
+  return shuffle([
     ...pickByRarity("common", 7),
     ...pickByRarity("mid", 5),
     ...pickByRarity("rare", hasLegendary ? 2 : 3),
     ...pickByRarity("superRare", 1),
     ...(hasLegendary ? pickByRarity("legendary", 1) : []),
-  ];
+  ]);
+}
 
-  return shuffle(card);
+function getIsoWeekData(date = new Date()) {
+  const utcDate = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  const day = utcDate.getUTCDay() || 7;
+  utcDate.setUTCDate(utcDate.getUTCDate() + 4 - day);
+
+  const yearStart = new Date(Date.UTC(utcDate.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((utcDate - yearStart) / 86400000 + 1) / 7);
+
+  return {
+    year: utcDate.getUTCFullYear(),
+    week,
+  };
 }
 
 function getCompletedLines(completedIndexes) {
@@ -105,78 +117,164 @@ function getCompletedLines(completedIndexes) {
     [3, 6, 9, 12],
   ];
 
-  return lines.filter((line) => line.every((index) => completedIndexes.includes(index)));
+  return lines.filter((line) =>
+    line.every((index) => completedIndexes.includes(index))
+  );
 }
 
 export default function App() {
-  const [loggedIn, setLoggedIn] = useState(false);
   const [user, setUser] = useState(null);
-  const [card, setCard] = useState(() => createCard());
+  const [loading, setLoading] = useState(true);
+  const [cardLoading, setCardLoading] = useState(false);
+  const [card, setCard] = useState(null);
   const [completed, setCompleted] = useState([]);
-const [adminMode] = useState(() => {
-  return new URLSearchParams(window.location.search).get("admin") === "1";
-});  const [eventLog, setEventLog] = useState([]);
-const [loading, setLoading] = useState(true);
+  const [eventLog, setEventLog] = useState([]);
+  const [message, setMessage] = useState("");
 
-useEffect(() => {
-  async function getSession() {
-    const { data } = await supabase.auth.getSession();
+  const [adminMode] = useState(() => {
+    return new URLSearchParams(window.location.search).get("admin") === "1";
+  });
 
-    setUser(data.session?.user ?? null);
-    setLoading(false);
+  const { year, week } = useMemo(() => getIsoWeekData(), []);
+
+  useEffect(() => {
+    async function initializeAuth() {
+      const { data, error } = await supabase.auth.getSession();
+
+      if (error) {
+        setMessage(`Login konnte nicht geprüft werden: ${error.message}`);
+      }
+
+      setUser(data.session?.user ?? null);
+      setLoading(false);
+    }
+
+    initializeAuth();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setCard(null);
+      setCompleted([]);
+      return;
+    }
+
+    async function loadWeeklyCard() {
+      setCardLoading(true);
+      setMessage("");
+
+      const { data, error } = await supabase
+        .from("weekly_cards")
+        .select("card")
+        .eq("user_id", user.id)
+        .eq("year", year)
+        .eq("week", week)
+        .maybeSingle();
+
+      if (error) {
+        setMessage(`Wochenkarte konnte nicht geladen werden: ${error.message}`);
+      } else {
+        setCard(data?.card ?? null);
+      }
+
+      setCardLoading(false);
+    }
+
+    loadWeeklyCard();
+  }, [user, year, week]);
+
+  async function loginWithTwitch() {
+    setMessage("");
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "twitch",
+      options: {
+        redirectTo: window.location.origin,
+      },
+    });
+
+    if (error) {
+      setMessage(`Twitch-Login fehlgeschlagen: ${error.message}`);
+    }
   }
 
-  getSession();
+  async function logout() {
+    await supabase.auth.signOut();
+    setUser(null);
+    setCard(null);
+    setCompleted([]);
+  }
 
-  const {
-    data: { subscription },
-  } = supabase.auth.onAuthStateChange((_event, session) => {
-    setUser(session?.user ?? null);
-  });
+  async function drawWeeklyCard() {
+    if (!user || cardLoading) return;
 
-  return () => subscription.unsubscribe();
-}, []);
+    setCardLoading(true);
+    setMessage("");
 
-async function loginWithTwitch() {
-  await supabase.auth.signInWithOAuth({
-    provider: "twitch",
-    options: {
-      redirectTo: window.location.origin,
-    },
-  });
-}
+    const newCard = createCard();
 
-async function logout() {
-  await supabase.auth.signOut();
-}
+    const { data, error } = await supabase
+      .from("weekly_cards")
+      .insert({
+        user_id: user.id,
+        year,
+        week,
+        card: newCard,
+      })
+      .select("card")
+      .single();
 
-const twitchName =
-  user?.user_metadata?.preferred_username ||
-  user?.user_metadata?.name ||
-  user?.email ||
-  "Twitch User";
-  const score = useMemo(
-    () => completed.reduce((sum, index) => sum + RARITY[card[index].rarity].xp, 0),
-    [completed, card]
-  );
+    if (error) {
+      if (error.code === "23505") {
+        const { data: existingCard, error: reloadError } = await supabase
+          .from("weekly_cards")
+          .select("card")
+          .eq("user_id", user.id)
+          .eq("year", year)
+          .eq("week", week)
+          .single();
 
-  const lines = useMemo(() => getCompletedLines(completed), [completed]);
-  const fullBingo = completed.length === 16;
+        if (reloadError) {
+          setMessage(`Vorhandene Karte konnte nicht geladen werden: ${reloadError.message}`);
+        } else {
+          setCard(existingCard.card);
+        }
+      } else {
+        setMessage(`Karte konnte nicht gezogen werden: ${error.message}`);
+      }
+    } else {
+      setCard(data.card);
+    }
+
+    setCardLoading(false);
+  }
 
   function triggerEvent(eventId) {
+    if (!card) return;
+
     const matchingIndexes = card
       .map((event, index) => (event.id === eventId ? index : null))
       .filter((index) => index !== null);
 
-    const newIndexes = matchingIndexes.filter((index) => !completed.includes(index));
+    const newIndexes = matchingIndexes.filter(
+      (index) => !completed.includes(index)
+    );
 
     if (newIndexes.length > 0) {
-      setCompleted((prev) => [...prev, ...newIndexes]);
+      setCompleted((previous) => [...previous, ...newIndexes]);
     }
 
     const event = EVENTS.find((item) => item.id === eventId);
 
-    setEventLog((prev) =>
+    setEventLog((previous) =>
       [
         {
           text: event.text,
@@ -186,58 +284,145 @@ const twitchName =
           }),
           hit: newIndexes.length > 0,
         },
-        ...prev,
+        ...previous,
       ].slice(0, 8)
     );
   }
 
- if (loading) {
-  return (
-    <main className="page center">
-      <section className="card login">
-        <h1>Bierbank Bingo</h1>
-        <p>Login wird geprüft...</p>
-      </section>
-    </main>
-  );
-}
+  const twitchName =
+    user?.user_metadata?.preferred_username ||
+    user?.user_metadata?.name ||
+    user?.email ||
+    "Twitch User";
 
-if (!user) {
-  return (
-    <main className="page center">
-      <section className="card login">
-        <div className="tag">Prototype v0.3</div>
-        <h1>Bierbank Bingo</h1>
-        <p>Wöchentliche 4x4-Bingo-Karte für PUBG-Stream-Momente.</p>
-        <button onClick={loginWithTwitch}>Mit Twitch anmelden</button>
-        <small>Echter Twitch Login via Twitch.</small>
-      </section>
-    </main>
+  const score = useMemo(() => {
+    if (!card) return 0;
+
+    return completed.reduce(
+      (sum, index) => sum + RARITY[card[index].rarity].xp,
+      0
+    );
+  }, [completed, card]);
+
+  const lines = useMemo(
+    () => getCompletedLines(completed),
+    [completed]
   );
-}
+
+  const fullBingo = Boolean(card) && completed.length === 16;
+
+  if (loading) {
+    return (
+      <main className="page center">
+        <section className="card login">
+          <h1>Bierbank Bingo Alpha</h1>
+          <p>Login wird geprüft...</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!user) {
+    return (
+      <main className="page center">
+        <section className="card login">
+          <div className="tag">Alpha</div>
+          <h1>Bierbank Bingo</h1>
+          <p>
+            Ziehe deine persönliche Wochenkarte und sammle während der Streams
+            Bingo-Felder.
+          </p>
+
+          {message && <p className="error-message">{message}</p>}
+
+          <button onClick={loginWithTwitch}>Mit Twitch anmelden</button>
+          <small>Login über Twitch und Supabase.</small>
+        </section>
+      </main>
+    );
+  }
+
+  if (cardLoading) {
+    return (
+      <main className="page center">
+        <section className="card login">
+          <div className="tag">Alpha</div>
+          <h1>Bierbank Bingo</h1>
+          <p>Deine Wochenkarte wird geladen...</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!card) {
+    return (
+      <main className="page center">
+        <section className="card draw-card">
+          <div className="tag">Bierbank Bingo Alpha</div>
+          <p className="eyebrow">
+            KW {week}/{year}
+          </p>
+          <h1>Neue Wochenkarte verfügbar</h1>
+          <p>
+            Ziehe jetzt deine persönliche 4×4-Karte. Sie gilt bis Samstag,
+            23:59 Uhr. Vergangene Stream-Ereignisse werden nicht rückwirkend
+            gewertet.
+          </p>
+
+          {message && <p className="error-message">{message}</p>}
+
+          <button className="primary-button" onClick={drawWeeklyCard}>
+            Wochenkarte ziehen
+          </button>
+
+          <button className="secondary-button" onClick={logout}>
+            Logout
+          </button>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="page">
       <header className="header">
         <div>
-          <h1>Bierbank Bingo</h1>
-          <p>KW 23/2026 · gültig bis Samstag, 23:59 Uhr</p>
-          <p style={{ marginTop: 6 }}>
+          <div className="brand-line">
+            <span className="alpha-badge">Alpha</span>
+            <h1>Bierbank Bingo</h1>
+          </div>
+
+          <p>
+            KW {week}/{year} · gültig bis Samstag, 23:59 Uhr
+          </p>
+          <p className="user-line">
             Eingeloggt als <strong>{twitchName}</strong>
           </p>
         </div>
 
-        <div className="stats">
-          <strong>{completed.length}/16</strong>
-          <span>Felder</span>
-          <strong>{score}</strong>
-          <span>XP</span>
-          <strong>{lines.length}</strong>
-          <span>Reihen</span>
-          <strong>{fullBingo ? "Ja" : "Nein"}</strong>
-          <span>Bingo</span>
+        <div className="header-actions">
+          <div className="stats">
+            <strong>{completed.length}/16</strong>
+            <span>Felder</span>
+            <strong>{score}</strong>
+            <span>XP</span>
+            <strong>{lines.length}</strong>
+            <span>Reihen</span>
+            <strong>{fullBingo ? "Ja" : "Nein"}</strong>
+            <span>Bingo</span>
+          </div>
+
+          <button className="secondary-button compact" onClick={logout}>
+            Logout
+          </button>
         </div>
       </header>
+
+      {message && (
+        <section className="status-message">
+          <p>{message}</p>
+        </section>
+      )}
 
       <section className="grid">
         {card.map((event, index) => (
@@ -251,61 +436,49 @@ if (!user) {
         ))}
       </section>
 
-      <section style={{ maxWidth: 1100, margin: "24px auto 0" }}>
-        <button
-          onClick={logout}
-          style={{
-            padding: "12px 16px",
-            borderRadius: 14,
-            border: "1px solid rgba(255,255,255,.2)",
-            background: "rgba(255,255,255,.06)",
-            color: "white",
-            fontWeight: 700,
-          }}
-        >
-          Logout
-        </button>
-      </section>
-
       {adminMode && (
-        <section style={{ maxWidth: 1100, margin: "18px auto 0" }}>
-          <h2>Admin-Trigger</h2>
-          <p style={{ color: "#a1a1aa" }}>
-            Später nur sichtbar für dich und freigeschaltete Mods.
-          </p>
+        <section className="admin-panel">
+          <div className="admin-heading">
+            <div>
+              <span className="alpha-badge">Admin-Demo</span>
+              <h2>Event-Trigger</h2>
+            </div>
+            <p>
+              Dieser Bereich ist nur über die Admin-URL sichtbar. Die
+              Fortschrittsspeicherung folgt im nächsten Schritt.
+            </p>
+          </div>
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: 10,
-            }}
-          >
+          <div className="admin-grid">
             {EVENTS.map((event) => (
               <button
                 key={event.id}
                 onClick={() => triggerEvent(event.id)}
-                style={{
-                  minHeight: 52,
-                  padding: 12,
-                  borderRadius: 14,
-                  border: "1px solid rgba(255,255,255,.12)",
-                  background: "rgba(255,255,255,.06)",
-                  color: "white",
-                  textAlign: "left",
-                }}
+                className="admin-trigger"
               >
-                {event.text}
+                <span>{event.text}</span>
+                <small>{RARITY[event.rarity].xp} XP</small>
               </button>
             ))}
           </div>
 
-          <h3>Eventlog</h3>
-          {eventLog.map((event, index) => (
-            <div key={index} style={{ color: event.hit ? "#a7f3d0" : "#a1a1aa" }}>
-              {event.time} · {event.text} {event.hit ? "✓" : "— nicht auf Karte"}
-            </div>
-          ))}
+          <div className="event-log">
+            <h3>Eventlog</h3>
+
+            {eventLog.length === 0 ? (
+              <p>Noch keine Events ausgelöst.</p>
+            ) : (
+              eventLog.map((event, index) => (
+                <div
+                  key={`${event.time}-${event.text}-${index}`}
+                  className={event.hit ? "event-hit" : "event-miss"}
+                >
+                  {event.time} · {event.text}{" "}
+                  {event.hit ? "✓" : "— nicht auf dieser Karte"}
+                </div>
+              ))
+            )}
+          </div>
         </section>
       )}
     </main>
