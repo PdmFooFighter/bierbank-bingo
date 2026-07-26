@@ -12,7 +12,7 @@ const RARITY = {
 
 // Twitch-Namen immer kleingeschrieben eintragen.
 // Weitere Mods können später einfach ergänzt werden.
-const ADMIN_TWITCH_NAMES = ["pdmfoofighter", "bierbankb"];
+const ADMIN_TWITCH_NAMES = ["pdm_foofighter", "bierbankb"];
 const MOD_TWITCH_NAMES = ["tomhagt"];
 
 const EVENTS = [
