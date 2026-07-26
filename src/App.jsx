@@ -13,7 +13,7 @@ const RARITY = {
 // Twitch-Namen immer kleingeschrieben eintragen.
 // Weitere Mods können später einfach ergänzt werden.
 const ADMIN_TWITCH_NAMES = ["pdmfoofighter", "bierbankb"];
-const MOD_TWITCH_NAMES = [];
+const MOD_TWITCH_NAMES = ["tomhagt"];
 
 const EVENTS = [
   { id: "bridge", text: "Brückencamping (volle Blockade)", rarity: "rare" },
